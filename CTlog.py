@@ -1,3 +1,10 @@
+
+#import tldextract
+
+#def extract_sld(domain_name):
+#    extracted = tldextract.extract(domain_name)
+#    return f"{extracted.domain}.{extracted.suffix}" if extracted.suffix else extracted.domain
+
 #This script queries the crt.sh API to retrieve certificate transparency logs for a list of domains. 
 #The results include details about certificates, such as the issuer, common name (CN), subject alternative names (SAN), 
 #and validity periods. It also identifies where the domain was found in the certificate (CN, SAN, or both).
@@ -25,6 +32,14 @@ except ImportError:
     print("Requests library not found. Installing...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
     import requests
+
+#check and install tldextract if not installed
+try:
+    import tldextract
+except ImportError:
+    print("tldextract module not found. Installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "tldextract"])
+    import tldextract
 
 # Input and output file paths
 INPUT_FILE = "domains.txt"
@@ -86,6 +101,10 @@ def extract_active_cert_details(certificates):
                 })
     return active_cert_details
 
+def extract_sld(domain_name):
+    extracted = tldextract.extract(domain_name)
+    return f"{extracted.domain}.{extracted.suffix}" if extracted.suffix else extracted.domain
+
 # Main script
 if __name__ == "__main__":
     with open(INPUT_FILE, "r") as file:
@@ -109,6 +128,7 @@ if __name__ == "__main__":
                     "Issue Date": cert_detail['not_before'],
                     "Expiry Date": cert_detail['not_after'],
                     "CN": cert_detail['common_name'],
+                    "SLD": extract_sld(cert_detail['common_name']),
                     "SAN": cert_detail['identities'],
                     "Serial Number": cert_detail['serial_number'],
                     "Issuer": cert_detail['issuer'],
@@ -134,7 +154,7 @@ if __name__ == "__main__":
 
     # Write results to a CSV file
     with open(OUTPUT_FILE, "w", newline="") as csvfile:
-        fieldnames = ["Domain", "Logged At", "Issue Date", "Expiry Date", "CN", "SAN", "Serial Number", "Issuer", "Details", "Found In"]
+        fieldnames = ["Domain", "Logged At", "Issue Date", "Expiry Date", "CN", "SLD", "SAN", "Serial Number", "Issuer", "Details", "Found In"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
         writer.writeheader()
