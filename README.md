@@ -1,14 +1,18 @@
 # Certificate Transparency Query Script
 
-This script queries the [crt.sh](https://crt.sh/) API to retrieve certificate transparency logs for a list of domains. The results include details about certificates, such as the issuer, common name (CN), subject alternative names (SAN), and validity periods. It also identifies where the domain was found in the certificate (CN, SAN, or both).
+This script queries the [crt.sh](https://crt.sh/) API to retrieve certificate transparency logs for a list of domains. The results include details about certificates, such as the issuer, common name (CN), subject alternative names (SAN), and validity periods. It also identifies where the domain was found in the certificate (CN, SAN, or both). Additionally, the script extracts the second-level domain (SLD) from the CN field, removes duplicate certificates with the same serial number, and handles errors gracefully.
 
 ## Features
 
 - Queries the crt.sh API for a list of domains.
 - Extracts and filters certificate details.
+- Removes duplicate certificates based on serial numbers (while keeping those with empty serials).
+- Extracts the second-level domain (SLD) from the CN field.
 - Logs errors (e.g., HTTP 502/503 responses) to an error file.
-- Outputs the results to a CSV file.
-- Automatically installs missing dependencies (`colorama`, `requests`).
+- Outputs results to a CSV file.
+- Ensures a row is added for every input domain, marking **"Not Found"** when no active certificates exist.
+- Marks domains with errors as **"Error"** in the **Found In** column.
+- Automatically installs missing dependencies (`colorama`, `requests`, `tldextract`).
 
 ## Prerequisites
 
@@ -19,10 +23,14 @@ This script queries the [crt.sh](https://crt.sh/) API to retrieve certificate tr
 
 1. Clone this repository or copy the script to your local machine.
 2. Ensure Python 3.x is installed on your system.
+3. Install dependencies manually if needed:
+   ```bash
+   pip install requests colorama tldextract
+   ```
 
 ## Usage
 
-1. Prepare an input file named `domains.txt` in the same directory as the script. Add one domain per line. For example:
+1. Prepare an input file named `domains.txt` in the same directory as the script. Add one domain per line. Example:
    ```
    example.com
    test.com
@@ -49,6 +57,7 @@ The output file `certificate_issuers.csv` contains the following columns:
 - **Issue Date**: The start date of the certificate's validity.
 - **Expiry Date**: The end date of the certificate's validity.
 - **CN**: The common name field from the certificate.
+- **SLD**: The extracted second-level domain from the CN field.
 - **SAN**: Subject alternative names from the certificate.
 - **Serial Number**: The serial number of the certificate.
 - **Issuer**: The name of the issuing certificate authority.
@@ -62,6 +71,8 @@ Domains that return HTTP 502 or 503 are logged in `error.txt` along with the HTT
 
 - The script retries failed API queries up to three times before moving to the next domain.
 - Expired certificates are excluded from the results.
+- The script extracts the second-level domain (SLD) from the CN field for better analysis.
+- Duplicates are removed based on serial numbers while keeping entries with empty serial numbers.
 
 ## Example Output
 
@@ -73,10 +84,10 @@ mydomain.org
 ```
 
 ### Output: `certificate_issuers.csv`
-| Domain       | Logged At           | Issue Date  | Expiry Date | CN         | SAN               | Serial Number | Issuer               | Details                      | Found In |
-|--------------|---------------------|-------------|-------------|------------|-------------------|---------------|----------------------|------------------------------|----------|
-| example.com  | 2023-01-01 12:34:56 | 2023-01-01  | 2024-01-01  | example.com | www.example.com   | 1234567890    | Let's Encrypt        | [crt.sh](https://crt.sh/?id=12345) | CN, SAN |
-| test.com     | 2023-02-01 08:12:34 | 2023-02-01  | 2024-02-01  | test.com    | www.test.com      | 0987654321    | DigiCert Inc         | [crt.sh](https://crt.sh/?id=67890) | CN      |
+| Domain       | Logged At           | Issue Date  | Expiry Date | CN         | SLD        | SAN               | Serial Number | Issuer               | Details                      | Found In |
+|--------------|---------------------|-------------|-------------|------------|------------|-------------------|---------------|----------------------|------------------------------|----------|
+| example.com  | 2023-01-01 12:34:56 | 2023-01-01  | 2024-01-01  | example.com | example.com | www.example.com   | 1234567890    | Let's Encrypt        | [crt.sh](https://crt.sh/?id=12345) | CN, SAN |
+| test.com     | 2023-02-01 08:12:34 | 2023-02-01  | 2024-02-01  | my.test.com | test.com    | www.test.com      | 0987654321    | DigiCert Inc         | [crt.sh](https://crt.sh/?id=67890) | CN      |
 
 ### Error File: `error.txt`
 ```
@@ -87,6 +98,7 @@ test.com returned HTTP 503
 
 - `requests`
 - `colorama`
+- `tldextract`
 
 The script automatically installs missing dependencies.
 

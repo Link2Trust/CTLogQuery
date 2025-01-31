@@ -1,14 +1,18 @@
-#This script queries the crt.sh API to retrieve certificate transparency logs for a list of domains. 
-#The results include details about certificates, such as the issuer, common name (CN), subject alternative names (SAN), 
-#and validity periods. It also identifies where the domain was found in the certificate (CN, SAN, or both).
-
-
 import requests
 import json
 import csv
 import datetime
 import subprocess
 import sys
+import tldextract
+
+# Ensure `tldextract` is installed
+try:
+    import tldextract
+except ImportError:
+    print("tldextract module not found. Installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "tldextract"])
+    import tldextract
 
 # Check and install colorama if not installed
 try:
@@ -18,7 +22,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "colorama"])
     from colorama import Fore, Style
 
-# Check and install requests if not installed
+# Ensure requests is installed
 try:
     import requests
 except ImportError:
@@ -30,6 +34,41 @@ except ImportError:
 INPUT_FILE = "domains.txt"
 OUTPUT_FILE = "certificate_issuers.csv"
 ERROR_FILE = "error.txt"
+
+# Function to remove duplicate serial numbers but keep empty ones
+def remove_duplicate_serial_numbers(records):
+    unique_records = []
+    seen_serials = set()
+    for record in records:
+        serial = record.get("Serial Number", "")
+        if serial:  # Only deduplicate if serial number is not empty
+            if serial not in seen_serials:
+                seen_serials.add(serial)
+                unique_records.append(record)
+        else:
+            unique_records.append(record)  # Keep all records with empty serial numbers
+    return unique_records
+
+# Function to extract the second-level domain (SLD)
+def extract_sld(domain_name):
+    extracted = tldextract.extract(domain_name)
+    return f"{extracted.domain}.{extracted.suffix}" if extracted.suffix else extracted.domain
+
+# Function to ensure "Not Found" and "Error" entries are added
+def ensure_output_entry(domain, found_status):
+    return {
+        "Domain": domain,
+        "Logged At": "",
+        "Issue Date": "",
+        "Expiry Date": "",
+        "CN": "",
+        "SLD": "",
+        "SAN": "",
+        "Serial Number": "",
+        "Issuer": "",
+        "Details": "",
+        "Found In": found_status
+    }
 
 # Function to query crt.sh for certificates of a given domain
 def query_certificates(domain):
@@ -54,7 +93,7 @@ def query_certificates(domain):
     return []
 
 # Function to filter active certificates and extract details
-def extract_active_cert_details(certificates):
+def extract_active_cert_details(certificates, domain):
     active_cert_details = []
     current_date = datetime.datetime.utcnow()
     for cert in certificates:
@@ -73,16 +112,17 @@ def extract_active_cert_details(certificates):
                 if any(domain in san for san in identities):
                     found_in.append("SAN")
                 active_cert_details.append({
-                    "domain": domain,
-                    "logged_at": cert.get('entry_timestamp', ''),
-                    "not_before": not_before,
-                    "not_after": not_after,
-                    "common_name": common_name,
-                    "identities": ", ".join(identities),
-                    "serial_number": serial_number,
-                    "issuer": cert['issuer_name'],
-                    "crt_sh_id": crt_sh_link,
-                    "found_in": ", ".join(found_in)
+                    "Domain": domain,
+                    "Logged At": cert.get('entry_timestamp', ''),
+                    "Issue Date": not_before,
+                    "Expiry Date": not_after,
+                    "CN": common_name,
+                    "SLD": extract_sld(common_name),
+                    "SAN": ", ".join(identities),
+                    "Serial Number": serial_number,
+                    "Issuer": cert['issuer_name'],
+                    "Details": crt_sh_link,
+                    "Found In": ", ".join(found_in)
                 })
     return active_cert_details
 
@@ -98,43 +138,36 @@ if __name__ == "__main__":
     for domain in domains:
         print(f"Querying certificates for domain: {domain}")
         certificates = query_certificates(domain)
-        active_cert_details = extract_active_cert_details(certificates)
+        active_cert_details = extract_active_cert_details(certificates, domain)
 
         if active_cert_details:
             print(f"Found {len(active_cert_details)} active certificate(s) for domain: {domain}")
             for cert_detail in active_cert_details:
                 results.append({
-                    "Domain": cert_detail['domain'],
-                    "Logged At": cert_detail['logged_at'],
-                    "Issue Date": cert_detail['not_before'],
-                    "Expiry Date": cert_detail['not_after'],
-                    "CN": cert_detail['common_name'],
-                    "SAN": cert_detail['identities'],
-                    "Serial Number": cert_detail['serial_number'],
-                    "Issuer": cert_detail['issuer'],
-                    "Details": cert_detail['crt_sh_id'],
-                    "Found In": cert_detail['found_in']
+                    "Domain": cert_detail['Domain'],
+                    "Logged At": cert_detail['Logged At'],
+                    "Issue Date": cert_detail['Issue Date'],
+                    "Expiry Date": cert_detail['Expiry Date'],
+                    "CN": cert_detail['CN'],
+                    "SLD": cert_detail['SLD'],
+                    "SAN": cert_detail['SAN'],
+                    "Serial Number": cert_detail['Serial Number'],
+                    "Issuer": cert_detail['Issuer'],
+                    "Details": cert_detail['Details'],
+                    "Found In": cert_detail['Found In']
                 })
                 successful_writes += 1
         else:
-            print(f"No active certificates found for domain: {domain}")
-            results.append({
-                "Domain": domain,
-                "Logged At": "",
-                "Issue Date": "",
-                "Expiry Date": "",
-                "CN": "",
-                "SAN": "",
-                "Serial Number": "",
-                "Issuer": "",
-                "Details": "",
-                "Found In": ""
-            })
+            print(f"No active certificates found for domain: {domain}, marking as 'Not Found' in output.")
+            results.append(ensure_output_entry(domain, "Not Found"))
             unsuccessful_writes += 1
+
+    # Remove duplicate serial numbers before saving, but keep empty ones
+    results = remove_duplicate_serial_numbers(results)
 
     # Write results to a CSV file
     with open(OUTPUT_FILE, "w", newline="") as csvfile:
-        fieldnames = ["Domain", "Logged At", "Issue Date", "Expiry Date", "CN", "SAN", "Serial Number", "Issuer", "Details", "Found In"]
+        fieldnames = ["Domain", "Logged At", "Issue Date", "Expiry Date", "CN", "SLD", "SAN", "Serial Number", "Issuer", "Details", "Found In"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
         writer.writeheader()
